@@ -3,9 +3,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
-local TweenService = game:GetService("TweenService")
 
--- Variables Globales
 local Holding = false
 local MenuVisible = true
 
@@ -15,7 +13,6 @@ _G.TeamCheck = false
 _G.AimPart = "Head"  -- Cibler la tête
 _G.Sensitivity = 0.1
 
--- Définir la distance maximale de l'aimbot
 _G.AimbotMaxDistance = 350
 
 -- FOV - Champ de vision
@@ -27,7 +24,10 @@ _G.CircleFilled = false
 _G.CircleVisible = true
 _G.CircleThickness = 1
 
--- Création du cercle FOV
+-- Paramètre pour contrôler la vitesse du mouvement de la caméra (plus petit = plus lent)
+_G.AimbotSpeed = 0.05  -- Plus faible, plus lent est le mouvement de la caméra
+
+local currentTarget = nil  -- Nouvelle variable pour conserver la cible actuelle
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 FOVCircle.Radius = _G.CircleRadius
@@ -38,16 +38,8 @@ FOVCircle.Transparency = _G.CircleTransparency
 FOVCircle.NumSides = _G.CircleSides
 FOVCircle.Thickness = _G.CircleThickness
 
--- Fonction pour obtenir la distance entre deux points en mètres
 local function GetDistanceInMeters(p1, p2)
     return (p1 - p2).Magnitude
-end
-
--- Fonction pour vérifier si un joueur est dans le cercle FOV
-local function IsInFOV(target)
-    local screenPoint = Camera:WorldToScreenPoint(target)
-    local distance = (Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2) - Vector2.new(screenPoint.X, screenPoint.Y)).Magnitude
-    return distance <= _G.CircleRadius
 end
 
 local function GetClosestPlayer()
@@ -63,7 +55,11 @@ local function GetClosestPlayer()
                 local Distance = GetDistanceInMeters(LocalPlayer.Character.HumanoidRootPart.Position, v.Character.HumanoidRootPart.Position)
                 
                 if Distance <= _G.AimbotMaxDistance then
-                    if IsInFOV(v.Character[_G.AimPart]) then
+                    local ScreenPoint = Camera:WorldToScreenPoint(v.Character.HumanoidRootPart.Position)
+                    local MouseDistance = (Vector2.new(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2.new(ScreenPoint.X, ScreenPoint.Y)).Magnitude
+                    
+                    if MouseDistance < MaximumDistance then
+                        MaximumDistance = MouseDistance
                         Target = v
                     end
                 end
@@ -83,6 +79,7 @@ end)
 UserInputService.InputEnded:Connect(function(Input)
     if Input.UserInputType == Enum.UserInputType.MouseButton2 then
         Holding = false
+        currentTarget = nil  -- Réinitialiser la cible quand on relâche la touche
     end
 end)
 
@@ -97,31 +94,31 @@ RunService.RenderStepped:Connect(function()
     FOVCircle.NumSides = _G.CircleSides
     FOVCircle.Thickness = _G.CircleThickness
 
-    -- Si on maintient le clic droit et que l'aimbot est activé
     if Holding and _G.AimbotEnabled then
-        local Target = GetClosestPlayer()
-        if Target and Target.Character:FindFirstChild(_G.AimPart) then
+        if not currentTarget then
+            -- Si aucune cible n'est encore assignée, on en prend une nouvelle
+            currentTarget = GetClosestPlayer()
+        end
+
+        if currentTarget and currentTarget.Character:FindFirstChild(_G.AimPart) then
             -- Calculer la direction vers la tête du joueur
-            local TargetPosition = Target.Character[_G.AimPart].Position
+            local TargetPosition = currentTarget.Character[_G.AimPart].Position
             local CameraPosition = Camera.CFrame.Position
 
-            -- Calculer la direction vers la cible
-            local DirectionToTarget = (TargetPosition - CameraPosition).Unit  -- Normaliser le vecteur de direction
-            local CameraLookAt = Camera.CFrame.LookVector  -- Vecteur de direction de la caméra
+            -- Lissage des mouvements de la caméra
+            local DirectionToTarget = (TargetPosition - CameraPosition).Unit  
+            local CameraLookAt = Camera.CFrame.LookVector
 
-            -- Appliquer une interpolation pour rendre le mouvement plus fluide
-            local NewCFrame = CFrame.lookAt(CameraPosition, TargetPosition)
+            -- Calcul de l'interpolation pour "humaniser" le mouvement
+            local NewCameraPosition = CameraPosition + DirectionToTarget * _G.AimbotSpeed  -- Applique un mouvement lent (interpolation)
+            local NewCFrame = CFrame.lookAt(NewCameraPosition, TargetPosition)
 
-            -- Utilisation d'un Tween pour rendre la transition de la caméra plus douce
-            local tweenInfo = TweenInfo.new(0.1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-            local goal = {CFrame = NewCFrame}
-            local tween = TweenService:Create(Camera, tweenInfo, goal)
-            tween:Play()
+            -- Mise à jour de la caméra
+            Camera.CFrame = NewCFrame
         end
     end
 end)
 
--- ESP Fonctionnalités (si nécessaire)
 local function createHighlight(target)
     if target:FindFirstChild("Highlight") then return end
 
@@ -164,7 +161,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Création du menu
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 ScreenGui.Enabled = MenuVisible
@@ -175,7 +171,7 @@ Frame.Position = UDim2.new(0, 10, 0, 10)
 Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 Frame.Parent = ScreenGui
 Frame.Active = true
-Frame.Draggable = true -- Rendre le menu déplaçable
+Frame.Draggable = true 
 
 local AimbotButton = Instance.new("TextButton")
 AimbotButton.Size = UDim2.new(1, 0, 0, 30)
@@ -201,7 +197,6 @@ FOVSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 FOVSlider.TextColor3 = Color3.new(1, 1, 1)
 FOVSlider.Parent = Frame
 
--- Bouton logique
 AimbotButton.MouseButton1Click:Connect(function()
     _G.AimbotEnabled = not _G.AimbotEnabled
     AimbotButton.Text = "Toggle Aimbot (" .. tostring(_G.AimbotEnabled) .. ")"
